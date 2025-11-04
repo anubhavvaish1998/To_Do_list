@@ -4,8 +4,6 @@ from django.db import connection
 def initialize_database_functions():
     """Initialize all PostgreSQL functions required for the task management system"""
     with connection.cursor() as cursor:
-        # Create functions without dropping the table
-
         # Function to ensure tasks table exists
         cursor.execute("""
             CREATE OR REPLACE FUNCTION ensure_tasks_table()
@@ -22,9 +20,7 @@ def initialize_database_functions():
                         update_task TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')
                     );
 
-                    -- Create an index on status for faster queries
                     CREATE INDEX idx_tasks_status ON tasks(status);
-                    -- Create an index on due_date for faster date-based queries
                     CREATE INDEX idx_tasks_due_date ON tasks(due_date);
                 END IF;
             END;
@@ -43,7 +39,6 @@ def initialize_database_functions():
             DECLARE
                 new_task_id INTEGER;
             BEGIN
-                -- Validate inputs
                 IF p_title IS NULL OR trim(p_title) = '' THEN
                     RAISE EXCEPTION 'Title cannot be empty';
                 END IF;
@@ -55,10 +50,7 @@ def initialize_database_functions():
                 INSERT INTO tasks (title, description, due_date, status)
                 VALUES (
                     trim(p_title),
-                    CASE WHEN p_description IS NULL OR trim(p_description) = '' 
-                         THEN NULL 
-                         ELSE trim(p_description) 
-                    END,
+                    CASE WHEN p_description IS NULL OR trim(p_description) = '' THEN NULL ELSE trim(p_description) END,
                     p_due_date,
                     lower(trim(p_status))
                 )
@@ -69,7 +61,7 @@ def initialize_database_functions():
             $$ LANGUAGE plpgsql;
         """)
 
-        # Function to get all tasks
+        # ✅ Fixed Function: get_all_tasks
         cursor.execute("""
             CREATE OR REPLACE FUNCTION get_all_tasks()
             RETURNS TABLE (
@@ -78,8 +70,8 @@ def initialize_database_functions():
                 description TEXT,
                 due_date TIMESTAMP WITH TIME ZONE,
                 status VARCHAR(50),
-                created_at TIMESTAMP WITH TIME ZONE (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata'),
-                update_task TIMESTAMP WITH TIME ZONE (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')
+                created_at TIMESTAMP WITH TIME ZONE,
+                update_task TIMESTAMP WITH TIME ZONE
             ) AS $$
             BEGIN
                 RETURN QUERY 
@@ -89,14 +81,11 @@ def initialize_database_functions():
                     t.description,
                     t.due_date,
                     t.status,
-                    t.created_at,
-                    t.update_task
+                    (t.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') AS created_at,
+                    (t.update_task AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') AS update_task
                 FROM tasks t 
                 ORDER BY 
-                    CASE 
-                        WHEN t.due_date IS NOT NULL THEN 0 
-                        ELSE 1 
-                    END,
+                    CASE WHEN t.due_date IS NOT NULL THEN 0 ELSE 1 END,
                     t.due_date ASC,
                     t.created_at DESC;
             END;
@@ -112,8 +101,8 @@ def initialize_database_functions():
                 description TEXT,
                 due_date TIMESTAMP WITH TIME ZONE,
                 status VARCHAR(50),
-                created_at TIMESTAMP WITH TIME ZONE (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata'),
-                update_task TIMESTAMP WITH TIME ZONE (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')
+                created_at TIMESTAMP WITH TIME ZONE,
+                update_task TIMESTAMP WITH TIME ZONE
             ) AS $$
             BEGIN
                 IF p_id IS NULL OR p_id < 1 THEN
@@ -121,7 +110,14 @@ def initialize_database_functions():
                 END IF;
 
                 RETURN QUERY 
-                SELECT t.* 
+                SELECT 
+                    t.id,
+                    t.title,
+                    t.description,
+                    t.due_date,
+                    t.status,
+                    (t.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') AS created_at,
+                    (t.update_task AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') AS update_task
                 FROM tasks t 
                 WHERE t.id = p_id;
             END;
@@ -139,7 +135,6 @@ def initialize_database_functions():
             )
             RETURNS BOOLEAN AS $$
             BEGIN
-                -- Validate inputs
                 IF p_id IS NULL OR p_id < 1 THEN
                     RAISE EXCEPTION 'Invalid task ID';
                 END IF;
@@ -178,12 +173,12 @@ def initialize_database_functions():
                 RETURN FOUND;
             END;
             $$ LANGUAGE plpgsql;
-            """)
+        """)
+
 
 def setup_database():
     """Setup the database by creating the table and all required functions"""
     with connection.cursor() as cursor:
-        # Check if table exists
         cursor.execute("""
             SELECT EXISTS (
                 SELECT FROM pg_tables 
@@ -192,7 +187,6 @@ def setup_database():
         """)
         table_exists = cursor.fetchone()[0]
         
-        # Only create functions and table if they don't exist
         if not table_exists:
             initialize_database_functions()
             cursor.execute("SELECT ensure_tasks_table();")
